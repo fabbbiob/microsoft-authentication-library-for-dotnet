@@ -134,6 +134,13 @@ csharp_space_between_parentheses = false
 csharp_space_between_square_brackets = false
 
 # C++ Files
+
+# CA1303: Do not pass literals as localized parameters
+dotnet_diagnostic.CA1303.severity = none
+
+# CA1031: Do not catch general exception types
+dotnet_diagnostic.CA1031.severity = none
+
 [*.{cpp,h,in}]
 curly_bracket_next_line = true
 indent_brace_style = Allman
@@ -159,3 +166,6 @@ indent_size = 2
 end_of_line = lf
 [*.{cmd, bat}]
 end_of_line = crlf
+
+# String constants not in resource files
+dotnet_diagnostic.CA2207.severity = none

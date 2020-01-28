@@ -37,10 +37,10 @@ namespace NetCoreTestApp
 
         private static int s_currentTid = 0;
 
-        public static void Main(string[] args)
+        public static async Task Main(string[] args)
         {
             var pca = CreatePca();
-            RunConsoleAppLogicAsync(pca).Wait();
+            await RunConsoleAppLogicAsync(pca).ConfigureAwait(false);
         }
 
         private static string GetAuthority()
@@ -99,44 +99,49 @@ namespace NetCoreTestApp
                     Enter your Selection: ");
                 int.TryParse(Console.ReadLine(), out var selection);
 
-                Task<AuthenticationResult> authTask = null;
+                AuthenticationResult authResult;
 
                 try
                 {
                     switch (selection)
                     {
                         case 1: // acquire token
-                            authTask = pca.AcquireTokenByIntegratedWindowsAuth(s_scopes).WithUsername(s_username).ExecuteAsync(CancellationToken.None);
-                            await FetchTokenAndCallGraphAsync(pca, authTask).ConfigureAwait(false);
+                            authResult = await pca
+                                .AcquireTokenByIntegratedWindowsAuth(s_scopes)
+                                .WithUsername(s_username)
+                                .ExecuteAsync();
+
+                            await CallGraphAsync(pca, authResult).ConfigureAwait(false);
 
                             break;
 
                         case 2: // acquire token u/p
-                            SecureString password = GetPasswordFromConsole();
-                            authTask = pca.AcquireTokenByUsernamePassword(s_scopes, s_username, password).ExecuteAsync(CancellationToken.None);
-                            await FetchTokenAndCallGraphAsync(pca, authTask).ConfigureAwait(false);
-
+                            using (SecureString password = GetPasswordFromConsole())
+                            {
+                                authResult = await pca.AcquireTokenByUsernamePassword(s_scopes, s_username, password).ExecuteAsync(CancellationToken.None);
+                            }
+                            await CallGraphAsync(pca, authResult).ConfigureAwait(false);
                             break;
 
                         case 3:
-                            authTask = pca.AcquireTokenWithDeviceCode(
+                            authResult = await pca.AcquireTokenWithDeviceCode(
                                 s_scopes,
                                 deviceCodeResult =>
                                 {
                                     Console.WriteLine(deviceCodeResult.Message);
                                     return Task.FromResult(0);
                                 }).ExecuteAsync(CancellationToken.None);
-                            await FetchTokenAndCallGraphAsync(pca, authTask).ConfigureAwait(false);
+                            await CallGraphAsync(pca, authResult).ConfigureAwait(false);
 
                             break;
 
                         case 4: // acquire token interactive with custom web ui
 
-                            authTask = pca.AcquireTokenInteractive(s_scopes)
+                            authResult = await pca.AcquireTokenInteractive(s_scopes)
                                 .WithCustomWebUi(new DefaultOsBrowserWebUi()) // make sure you've configured a redirect uri of "http://localhost" or "http://localhost:1234" in the _pca builder
                                 .ExecuteAsync(CancellationToken.None);
 
-                            await FetchTokenAndCallGraphAsync(pca, authTask).ConfigureAwait(false);
+                            await CallGraphAsync(pca, authResult).ConfigureAwait(false);
 
                             break;
 
@@ -148,24 +153,23 @@ namespace NetCoreTestApp
                                 OpenBrowserAsync = SystemWebViewOptions.OpenWithEdgeBrowserAsync
                             };
 
-                            var cts = new CancellationTokenSource();
-                            authTask = pca.AcquireTokenInteractive(s_scopes)
+                            authResult = await pca.AcquireTokenInteractive(s_scopes)
                                 .WithSystemWebViewOptions(options)
-                                .ExecuteAsync(cts.Token);
+                                .ExecuteAsync();
 
-                            await FetchTokenAndCallGraphAsync(pca, authTask).ConfigureAwait(false);
+                            await CallGraphAsync(pca, authResult).ConfigureAwait(false);
 
                             break;
 
                         case 6: // acquire token silent
-                            IAccount account = pca.GetAccountsAsync().Result.FirstOrDefault();
+                            IAccount account = (await pca.GetAccountsAsync().ConfigureAwait(false)).FirstOrDefault();
                             if (account == null)
                             {
                                 Log(LogLevel.Error, "Test App Message - no accounts found, AcquireTokenSilentAsync will fail... ", false);
                             }
 
-                            authTask = pca.AcquireTokenSilent(s_scopes, account).ExecuteAsync(CancellationToken.None);
-                            await FetchTokenAndCallGraphAsync(pca, authTask).ConfigureAwait(false);
+                            authResult = await pca.AcquireTokenSilent(s_scopes, account).ExecuteAsync(CancellationToken.None);
+                            await CallGraphAsync(pca, authResult).ConfigureAwait(false);
 
                             break;
 
@@ -182,7 +186,7 @@ namespace NetCoreTestApp
 
                             s_currentTid = (s_currentTid + 1) % s_tids.Length;
                             pca = CreatePca();
-                            RunConsoleAppLogicAsync(pca).Wait();
+                            await RunConsoleAppLogicAsync(pca).ConfigureAwait(false);
                             break;
 
                         case 0:
@@ -203,19 +207,17 @@ namespace NetCoreTestApp
             }
         }
 
-        private static async Task FetchTokenAndCallGraphAsync(IPublicClientApplication pca, Task<AuthenticationResult> authTask)
+        private static async Task CallGraphAsync(IPublicClientApplication pca, AuthenticationResult authResult)
         {
-            await authTask.ConfigureAwait(false);
-
             Console.BackgroundColor = ConsoleColor.DarkGreen;
-            Console.WriteLine("Token is {0}", authTask.Result.AccessToken);
+            Console.WriteLine("Token is {0}", authResult.AccessToken);
             Console.ResetColor();
 
             Console.BackgroundColor = ConsoleColor.DarkMagenta;
             await DisplayAccountsAsync(pca).ConfigureAwait(false);
-            var callGraphTask = CallGraphAsync(authTask.Result.AccessToken);
-            callGraphTask.Wait();
-            Console.WriteLine("Result from calling the ME endpoint of the graph: " + callGraphTask.Result);
+            var graphResult = await CallGraphAsync(authResult.AccessToken);
+            
+            Console.WriteLine("Result from calling the ME endpoint of the graph: " + graphResult);
             Console.ResetColor();
         }
 
@@ -304,20 +306,23 @@ namespace NetCoreTestApp
 
         private static async Task<string> CallGraphAsync(string token)
         {
-            var httpClient = new System.Net.Http.HttpClient();
-            System.Net.Http.HttpResponseMessage response;
-            try
+            using (var httpClient = new System.Net.Http.HttpClient())
+            using (var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, GraphAPIEndpoint))
             {
-                var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Get, GraphAPIEndpoint);
-                //Add the token in Authorization header
-                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
-                response = await httpClient.SendAsync(request).ConfigureAwait(false);
-                var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
-                return content;
-            }
-            catch (Exception ex)
-            {
-                return ex.ToString();
+                try
+                {
+                    //Add the token in Authorization header
+                    request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+                    var response = await httpClient.SendAsync(request).ConfigureAwait(false);
+                    var content = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+                    return content;
+                }
+#pragma warning disable CA1031 // Do not catch general exception types
+                catch (Exception ex)
+#pragma warning restore CA1031 // Do not catch general exception types
+                {
+                    return ex.ToString();
+                }
             }
         }
     }
