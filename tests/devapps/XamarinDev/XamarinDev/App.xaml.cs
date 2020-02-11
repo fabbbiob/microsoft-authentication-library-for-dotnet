@@ -25,7 +25,7 @@ namespace XamarinDev
                 switch (Device.RuntimePlatform)
                 {
                     case Device.iOS:
-                        return "msauth.com.companyname.XamarinDev://auth";
+                        return "msauth.com.microsoft.msalnettest-df://auth";
                     case Device.Android:
                         return "msauth://com.companyname.xamarindev/t+Bk/nrTiK6yhmUDgd80TS5ZZT8=";
                     default:
